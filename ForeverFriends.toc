@@ -14,9 +14,9 @@
 ## X-Category: Guild, Quests & Leveling, Inventory, Map & Minimap
 ## X-Flavor: Forever
 ## X-License: MIT
-## X-Curse-Project-ID: 0000000
+## X-Curse-Project-ID: 1790128
 ## X-Wago-ID: 00000000
-## X-Website: https://github.com/YOUR_USERNAME/ForeverFriends
+## X-Website: https://github.com/Drakhunter/ForeverFriendsSquad
 
 # Embedded Libraries (Ace3 + LibSharedMedia + LibDBIcon + Compression)
 embeds.xml
