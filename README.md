@@ -1,17 +1,118 @@
 <div align="center">
   <img src="Media/icon-curseforge.png" alt="ForeverFriends Logo" width="140" height="140" />
   <h1>ForeverFriends — Squad Hub</h1>
-  <p><strong>Das All-in-One Stammgruppen- & Freunde-Addon für World of Warcraft: Forever (Client 16001)</strong></p>
+  <p><strong>The All-in-One Squad & Friends Hub for World of Warcraft: Forever (Client 16001)</strong></p>
   <p>
-    <em>Gemeinsames Inventar, Bank & Twinks · Berufe- & Mats-Check · Live-Quest-Sync · Weltkarten-Radar · Gruppen-QoL</em>
+    <em>Shared Inventory, Bank & Alts · Professions & Material Checker · Live Quest Sync · World Map Radar · Group QoL</em>
+  </p>
+  <p>
+    <a href="#overview-english"><strong>English Documentation</strong></a> ·
+    <a href="#slash-commands"><strong>Slash Commands</strong></a> ·
+    <a href="#github--curseforge-cicd-setup-for-maintainers"><strong>CurseForge CI/CD</strong></a> ·
+    <a href="#überblick-deutsch"><strong>Deutsche Dokumentation</strong></a>
   </p>
 </div>
 
 ---
 
+## Overview (English)
+
+**ForeverFriends [Squad Hub]** connects you, your alts (twinks), and your friend group in **World of Warcraft: Forever** seamlessly in the background — whether you are currently in a party, playing in the same guild, or questing solo across the world.
+
+Built specifically for the modern **WoW: Forever (`Interface: 16001`)** client, it features native support for **two-word character names (`First + Surname`)**, **cross-faction tracking (`[H]` Horde & `[A]` Alliance)**, and a **Zero-Idle-Traffic** synchronization engine.
+
+### Key Features
+
+1. **Shared Inventory, Bank, Alts & Gold Tracker (`Priority 1`)**
+   - **Live Item Tooltips:** Hover over any item to immediately see which of your own characters (alts/twinks) or friends have it in their bags, bank, or equipped — complete with class colors and `[H]`/`[A]` faction badges.
+   - **Squad Wishlist & Quick-Trade Helper:** Right-click any item to star (`[*]`) it on the shared Squad Wishlist. When opening a trade window with a friend, ForeverFriends automatically displays a 1-click **Quick-Trade Bar** for wishlist items and consumables.
+   - **Faction-Separated Gold Summary:** Tracks gold across *You · Friends · `[H]` Horde · `[A]` Alliance · Total*.
+
+2. **Professions, Recipes & 3-Tier Material Availability Checker (`Priority 1`)**
+   - **Who Can Craft What?** Browse all learned recipes across your alts and friends in one searchable list and filter by specific professions (*Alchemy*, *Blacksmithing*, *Cooking*, *Engineering*, *Enchanting*, etc.).
+   - **3-Tier `Mats-Check` (Reagent Availability):** Automatically scans recipe reagents and checks whether the required materials are available:
+     - **Green (`Mats: Nx (Du)`)** — Immediately craftable using materials on your currently active character (bags + bank).
+     - **Blue (`Mats: Nx (Twinks)`)** — Craftable using combined materials across your own characters/alts.
+     - **Gold (`Mats: Nx (DB/Squad)`)** — Craftable when pooling materials from your entire friend group database.
+   - **Detailed Reagent Tooltip:** Hover over any recipe row to see a full breakdown of every required material (`Have / Needed`) and which character holds it.
+
+3. **Live Quest & Leveling Sync (`Priority 2`)**
+   - Compare active quests and live objective progress (`3/10`) across your squad in real time.
+   - Filter by your current zone and immediately see which same-faction friends are still missing a quest, with 1-click quest sharing.
+
+4. **GuildMap-Style World Radar, `<1s` Death Alerts & Group QoL (`Priority 3`)**
+   - **World Map Friend Pins (Solo & Group):** Displays class-colored pins for your active friends directly on the World Map — even when you are not in a party.
+   - **Instant (`<1s`) Death / Gank Alerts & SOS Waypoints:** Broadcasts a clickable alert banner with map coordinates when a friend dies or clicks **"SOS Notruf!"**, allowing 1-click waypoint placement via the Direct Fast-Path channel.
+   - **Movable Squad Radar HUD & Instance Lockout Tracker:** Compact on-screen HUD showing friend vitals, current zone, and your rolling **5-instances-per-hour lockout counter**.
+
+5. **Global Faction & Character Filter Bar**
+   - Filter all tabs simultaneously with a single click by **Faction** (`All`, `[H] Horde`, `[A] Alliance`, `Own Faction`) or by any individual **Character / Alt / Friend** via the header dropdown.
+
+6. **Zero-Idle-Traffic Architecture & Client 16001 Best Practices**
+   - **100% Secret Addon-Only Sync:** Uses invisible addon communication channels (`PARTY`, `RAID`, `INSTANCE_CHAT`, `GUILD`, and online-verified `WHISPER`) compressed with `LibSerialize` + `LibDeflate`. Never occupies numbered `/1..10` chat channels!
+   - **Content Fingerprint Guard:** Persists content hashes in `SavedVariablesPerCharacter` (`ForeverFriendsCharDB.sentHashes`). Sorting bags, `/reload`, or Blizzard's frequent `QUEST_LOG_UPDATE` events generate **0 network packets** unless actual item counts or quest progress changed.
+   - **GuildMap-Style GPS & Native Group Bypass:** Reads party/raid member positions and vitals 100% locally via the WoW API (`0` network packets) and stops all GPS broadcasts when standing still, in combat, or inside instances.
+   - **5 Modern UI Themes:** *Obsidian Cyan*, *Emerald Slate*, *Forever Gold*, *Midnight Violet*, and *Crimson Shadow* — freely movable and drag-scalable (`65%–150%`).
+
+---
+
+## Slash Commands
+
+| Command | Description |
+| :--- | :--- |
+| `/ff` or `/squad` | Toggle the main **ForeverFriends Squad Hub** window |
+| `/ff sync` | Force an immediate full state sync with your friends |
+| `/ff inv` | Invite all online members of your squad roster to a party |
+| `/ff sos [message]` | Broadcast an emergency SOS alert with your current map coordinates |
+| `/ff add <First Surname>` | Add a friend to your permanent squad roster |
+| `/ff hud` | Toggle the floating **Squad Radar HUD** on or off |
+| `/ff config` | Open the **Settings & Customization** tab |
+| `/ff reset` | Reset window position and scale back to center |
+
+---
+
+## Installation
+
+1. Download the latest `ForeverFriends.zip` release archive.
+2. Extract the `ForeverFriends` folder into your **WoW: Forever** `AddOns` directory:
+   ```text
+   World of Warcraft\_forever_\Interface\AddOns\ForeverFriends
+   ```
+   *(Make sure `ForeverFriends.toc` is located directly at `...\Interface\AddOns\ForeverFriends\ForeverFriends.toc` and not nested inside a double `ForeverFriends\ForeverFriends` folder).*
+3. Restart the game client (or type `/reload` if updating an existing installation).
+
+---
+
+## GitHub & CurseForge CI/CD Setup (For Maintainers)
+
+This repository is pre-configured for **automated releases to GitHub Releases & CurseForge** using [BigWigsMods/packager](https://github.com/BigWigsMods/packager) (`.github/workflows/release.yml` & `.pkgmeta`).
+
+### 1. Set Your Project ID in `ForeverFriends.toc`
+Once you create your project on [CurseForge](https://authors.curseforge.com/), copy your numeric **Project ID** into `ForeverFriends.toc`:
+```ini
+## X-Curse-Project-ID: 1234567
+```
+
+### 2. Add Your CurseForge API Token to GitHub Secrets
+1. Generate an API Token on CurseForge at [API Tokens](https://authors.curseforge.com/#/api-tokens).
+2. In your GitHub repository, navigate to **Settings** -> **Secrets and variables** -> **Actions** -> **New repository secret**:
+   - **Name:** `CF_API_KEY`
+   - **Secret:** `<Your CurseForge API Token>`
+
+### 3. Publish a Release via Git Tag
+Whenever you push a version tag, GitHub Actions validates all `.toc` paths and Lua 5.1 syntax, builds `ForeverFriends-<version>.zip`, creates a **GitHub Release**, and uploads the package with `CHANGELOG.md` directly to **CurseForge**:
+```bash
+git tag v1.0.0
+git push origin v1.0.0
+```
+*(You can upload `Media/icon-curseforge.png` directly as your 512×512 CurseForge project avatar!)*
+
+---
+---
+
 ## Überblick (Deutsch)
 
-**ForeverFriends [Squad Hub]** verbindet dich und deine Freunde in **World of Warcraft: Forever** automatisch im Hintergrund — egal ob ihr gerade gemeinsam in einer Gruppe seid, in einer Gilde spielt oder solo in der Welt unterwegs seid.
+**ForeverFriends [Squad Hub]** verbindet dich, deine Twinks und deine Freunde in **World of Warcraft: Forever** automatisch im Hintergrund — egal ob ihr gerade gemeinsam in einer Gruppe seid, in einer Gilde spielt oder solo in der Welt unterwegs seid.
 
 ### Hauptfunktionen
 
@@ -32,7 +133,7 @@
    - Vergleicht eure aktiven Quests + Teilziele (`3/10`) in Echtzeit.
    - Zeigt sofort an, welchen Freunden derselben Fraktion eine Quest noch fehlt, und erlaubt 1-Klick-Teilen.
 
-4. **Weltkarten-Radar, SOS-Notruf & Gruppen-Komfort (`Prio 3`)**
+4. **Weltkarten-Radar (GuildMap-Stil), SOS-Notruf & Gruppen-Komfort (`Prio 3`)**
    - **Karten-Pins (Solo & Gruppe):** Zeigt deine aktiven Freunde klassenfarbig auf der Weltkarte an — auch wenn ihr nicht in einer Gruppe seid.
    - **Sofortiger Death-/Gank-Alert (`<1s`) & SOS-Ping:** Schickt bei Tod oder Klick auf *„SOS Notruf!"* ein klickbares Banner mit Zonen-Koordinaten, über das Freunde sofort einen Karten-Wegpunkt setzen können.
    - **Squad-HUD & Instanz-ID-Tracker:** Kompaktes, frei verschiebbares HUD mit Lebens-/Manabalken und Live-Zähler für das **5-Instanzen-pro-Stunde-Limit**.
@@ -40,14 +141,14 @@
 5. **Globaler Fraktions- & Charakter-Filter**
    - Filtere das gesamte Addon jederzeit mit einem Klick nach **Fraktion** (`Alle`, `[H] Horde`, `[A] Allianz`, `Eigene`) oder nach jedem einzelnen **Charakter / Twink / Freund**.
 
-6. **Moderne Technik (Client 16001 / Taint-Free)**
+6. **Zero-Idle-Traffic & Moderne Technik (Client 16001 / Taint-Free)**
    - **100% Geheimer Addon-Only Sync:** Nutzt ausschließlich unsichtbare Addon-Kanäle (`PARTY`, `RAID`, `GUILD`, `WHISPER`) mit `LibSerialize` + `LibDeflate`-Kompression — belegt **keinen** `/1..10` Chat-Kanal!
+   - **Content-Hash-Guard:** Sendet **0 Pakete** beim Umsortieren von Taschen, bei `/reload` oder bei grundlosen `QUEST_LOG_UPDATE`-Events, solange sich die echten Bestände nicht geändert haben.
+   - **GuildMap-GPS & Gruppen-Bypass:** Liest Gruppen-/Raid-Mitglieder lokal über die WoW-API aus (`0` Pakete) und sendet im Stehen, im Kampf oder in Instanzen keinerlei GPS-Traffic.
    - **Voller Support für WoW: Forever Vor- & Nachnamen** (2-Wort-Charakternamen).
    - **5 moderne Farbschemata (Themes):** *Obsidian Cyan*, *Smaragd Schiefer*, *Forever Gold*, *Mitternacht Violett*, *Blutmond*, stufenlos skalier- und verschiebbar.
 
----
-
-## Slash-Befehle
+### Slash-Befehle (Deutsch)
 
 | Befehl | Beschreibung |
 | :--- | :--- |
@@ -59,47 +160,3 @@
 | `/ff hud` | Blendet das kompakte **Squad Radar HUD** ein oder aus |
 | `/ff config` | Öffnet direkt den Reiter **Einstellungen** |
 | `/ff reset` | Setzt Fensterposition und Skalierung auf die Bildschirmmitte zurück |
-
----
-
-## Installation
-
-1. Lade das aktuelle Release-Archiv `ForeverFriends.zip` herunter.
-2. Entpacke den Ordner `ForeverFriends` nach:
-   ```text
-   World of Warcraft\_forever_\Interface\AddOns\ForeverFriends
-   ```
-   *(Achte darauf, dass die Datei `ForeverFriends.toc` direkt unter `...\Interface\AddOns\ForeverFriends\ForeverFriends.toc` liegt und kein doppelter Unterordner entstanden ist).*
-3. Starte WoW: Forever neu (oder gib `/reload` ein, falls das Addon bereits installiert war).
-
----
-
-## GitHub & CurseForge CI/CD Setup (Für Maintainer)
-
-Dieses Repository ist komplett vorbereitet für **automatische Releases auf GitHub & CurseForge** über [BigWigsMods/packager](https://github.com/BigWigsMods/packager) (`.github/workflows/release.yml` & `.pkgmeta`).
-
-### 1. Projekt-ID in `ForeverFriends.toc` eintragen
-Sobald du das Projekt auf [CurseForge](https://authors.curseforge.com/) angelegt hast, kopiere deine numerische **Project ID** (rechts oben auf der CurseForge-Projektseite) in die Datei `ForeverFriends.toc`:
-```ini
-## X-Curse-Project-ID: 1234567
-```
-
-### 2. CurseForge API-Token in GitHub hinterlegen
-1. Erstelle auf CurseForge unter [API Tokens](https://authors.curseforge.com/#/api-tokens) ein neues Token.
-2. Öffne dein GitHub-Repository -> **Settings** -> **Secrets and variables** -> **Actions** -> **New repository secret**:
-   - **Name:** `CF_API_KEY`
-   - **Secret:** `<Dein CurseForge API Token>`
-
-### 3. Neues Release veröffentlichen
-Sobald du einen Git-Tag erstellst und pushst, baut GitHub Actions automatisch das `.zip`, ersetzt `@project-version@` in der `.toc`-Datei, erstellt ein **GitHub Release** und lädt das Paket samt `CHANGELOG.md` auf **CurseForge** hoch:
-```bash
-git tag v1.0.0
-git push origin v1.0.0
-```
-*(Als Projekt-Avatar auf CurseForge kannst du direkt die Datei `Media/icon-curseforge.png` hochladen!)*
-
----
-
-## Overview (English)
-
-**ForeverFriends [Squad Hub]** is a modern, taint-free all-in-one group & friends addon built specifically for **World of Warcraft: Forever (`Interface: 16001`)**, featuring full support for two-word character names (`First + Surname`), cross-faction filtering (`[H]` / `[A]`), shared inventory/bank/alt tracking, a profession & reagent availability checker (`Mats-Check`), real-time quest progress sync, and a World Map squad radar with `<1s` Death/SOS alerts.
