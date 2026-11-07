@@ -14,10 +14,105 @@ local lastAttackerName = nil
 local lastAttackerIsPlayer = false
 local toastFrame = nil
 local lastBroadcastTime = 0
+local lastMapID = 0
+local lastZone = ""
 local lastX, lastY = 0, 0
 
 -- -------------------------------------------------------------------------
--- Player Vitals & GPS Broadcast
+-- Native Party / Raid Local Reader (0 Network Packets for Group Members!)
+-- Reads HP, Mana, Zone, and Map Coordinates directly from the WoW Client API
+-- for any friend who is currently in your Party or Raid.
+-- -------------------------------------------------------------------------
+function Radar:UpdateLocalGroupMembers()
+    if not IsInGroup or not IsInGroup() then return false end
+    local isRaid = IsInRaid and IsInRaid()
+    local count = isRaid and (GetNumGroupMembers and GetNumGroupMembers() or 0) or (GetNumSubgroupMembers and GetNumSubgroupMembers() or 0)
+    local updatedAny = false
+    local now = time()
+
+    for i = 1, count do
+        local unit = isRaid and ("raid" .. i) or ("party" .. i)
+        if UnitExists and UnitExists(unit) and not (UnitIsUnit and UnitIsUnit(unit, "player")) then
+            local short = ns.GetUnitName(unit)
+            if short ~= "" and short ~= "Unbekannt" and not ns.IsSelfName(short) then
+                local charKey = ns.NormalizeCharKey(short)
+                local peer = ns.onlinePeers[charKey] or {}
+
+                local _, classFile = UnitClass and UnitClass(unit)
+                local lvl = UnitLevel and UnitLevel(unit)
+                local fac = UnitFactionGroup and select(1, UnitFactionGroup(unit))
+
+                local hpCur = ns.SafeNumber(UnitHealth and UnitHealth(unit), 100)
+                local hpMax = math.max(1, ns.SafeNumber(UnitHealthMax and UnitHealthMax(unit), 100))
+                local hpPct = math.floor((hpCur / hpMax) * 100 + 0.5)
+
+                local mCur = ns.SafeNumber(UnitPower and UnitPower(unit, 0), 100)
+                local mMax = math.max(1, ns.SafeNumber(UnitPowerMax and UnitPowerMax(unit, 0), 100))
+                local manaPct = math.floor((mCur / mMax) * 100 + 0.5)
+
+                local mapID = (C_Map and C_Map.GetBestMapForUnit and ns.SafeNumber(C_Map.GetBestMapForUnit(unit), 0)) or peer.mapID or 0
+                local x, y = peer.x or 0, peer.y or 0
+                if mapID > 0 and C_Map and C_Map.GetPlayerMapPosition then
+                    local okPos, pos = pcall(C_Map.GetPlayerMapPosition, mapID, unit)
+                    if okPos and pos and not ns.IsSecret(pos) and pos.GetXY then
+                        local px, py = pos:GetXY()
+                        x = ns.SafeNumber(px, x)
+                        y = ns.SafeNumber(py, y)
+                    end
+                end
+
+                local zoneName = peer.zone
+                if mapID > 0 and C_Map and C_Map.GetMapInfo then
+                    local okMap, mInfo = pcall(C_Map.GetMapInfo, mapID)
+                    if okMap and mInfo and not ns.IsSecret(mInfo) and mInfo.name then
+                        zoneName = ns.SafeString(mInfo.name, zoneName)
+                    end
+                end
+
+                peer.key = charKey
+                peer.name = short
+                peer.shortName = short
+                peer.class = ns.SafeString(classFile, peer.class or "WARRIOR")
+                if lvl and not ns.IsSecret(lvl) and lvl > 0 then peer.level = lvl end
+                peer.faction = ns.NormalizeFaction(fac or peer.faction or ns.GetPlayerFaction())
+                peer.zone = zoneName or "In Gruppe"
+                peer.mapID = mapID
+                peer.x = x
+                peer.y = y
+                peer.hpPct = hpPct
+                peer.manaPct = manaPct
+                peer.inCombat = ns.SafeBoolean(UnitAffectingCombat and UnitAffectingCombat(unit))
+                peer.isDead = ns.SafeBoolean(UnitIsDeadOrGhost and UnitIsDeadOrGhost(unit))
+                peer.lastSeen = now
+                ns.onlinePeers[charKey] = peer
+                updatedAny = true
+            end
+        end
+    end
+
+    if updatedAny and ns.QoL and ns.QoL.UpdateHUD then
+        ns.QoL:UpdateHUD()
+    end
+    return updatedAny
+end
+
+-- Check if there is at least one online friend/guildmate who is NOT already in our Party/Raid
+function Radar:HasOutOfGroupRecipient()
+    if IsInGuild and IsInGuild() and ns.db and ns.db.sync and ns.db.sync.useGuild then
+        return true
+    end
+    local onlineFriends = (ns.Sync and ns.Sync.GetConfirmedOnlineFriends and ns.Sync:GetConfirmedOnlineFriends()) or {}
+    for _, shortName in pairs(onlineFriends) do
+        local inGroup = (UnitInParty and UnitInParty(shortName)) or (UnitInRaid and UnitInRaid(shortName))
+        if not inGroup then
+            return true
+        end
+    end
+    return false
+end
+
+-- -------------------------------------------------------------------------
+-- Player Vitals & GuildMap-Style GPS Broadcast (Zero Idle Polling!)
 -- -------------------------------------------------------------------------
 local function GetPlayerVitals()
     local hpCur = ns.SafeNumber(UnitHealth and UnitHealth("player"), 100)
@@ -37,13 +132,39 @@ local function GetPlayerVitals()
     return hpPct, manaPct, inCombat, isDead
 end
 
-function Radar:BroadcastGPS(whisperTarget)
+function Radar:BroadcastGPS(whisperTarget, force)
     if not ns.Sync or not ns.db or not ns.db.radar or not ns.db.radar.enabled then return end
 
+    local isTargeted = (whisperTarget ~= nil and whisperTarget ~= "")
+    if not force and not isTargeted then
+        -- GuildMap Rule 1: Never poll GPS while in combat or inside dungeon/raid instances
+        if ns.Sync:IsPlayerInCombat() then return end
+        if IsInInstance and select(1, IsInInstance()) then return end
+        -- GuildMap Rule 2: If nobody outside our Party/Raid is reachable, Party/Raid already reads our position locally!
+        if not self:HasOutOfGroupRecipient() then return end
+    end
+
     local zone, subzone, mapID, x, y = ns.GetPlayerLocationData()
+    x = x or 0
+    y = y or 0
+
+    if not force and not isTargeted then
+        -- GuildMap Rule 3: Zero traffic when standing still / idle!
+        -- Only broadcast if the map/zone changed OR player moved by at least 0.8% of map width
+        local dx = x - (lastX or 0)
+        local dy = y - (lastY or 0)
+        local distSq = (dx * dx) + (dy * dy)
+        local zoneChanged = (mapID ~= lastMapID) or (zone ~= lastZone)
+        if not zoneChanged and distSq < 0.000064 then
+            return -- Standing still -> 0 packets sent!
+        end
+    end
+
     local hpPct, manaPct, inCombat, isDead = GetPlayerVitals()
     local lockouts = (ns.QoL and ns.QoL.GetActiveLockoutCount and ns.QoL:GetActiveLockoutCount()) or 0
 
+    lastMapID = mapID
+    lastZone = zone
     lastX, lastY = x, y
     lastBroadcastTime = GetTime()
 
@@ -51,8 +172,8 @@ function Radar:BroadcastGPS(whisperTarget)
         zone = zone,
         subzone = subzone,
         mapID = mapID,
-        x = tonumber(string.format("%.4f", x or 0)) or 0,
-        y = tonumber(string.format("%.4f", y or 0)) or 0,
+        x = tonumber(string.format("%.4f", x)) or 0,
+        y = tonumber(string.format("%.4f", y)) or 0,
         hp = hpPct,
         mp = manaPct,
         cb = inCombat and 1 or 0,
@@ -206,7 +327,7 @@ function Radar:RefreshWorldMapPins()
     local pinIdx = 0
 
     for _, peer in pairs(ns.onlinePeers or {}) do
-        if (now - (peer.lastSeen or 0)) < 180 and peer.mapID == viewedMapID and peer.x and peer.y and peer.x > 0 and peer.y > 0 then
+        if (now - (peer.lastSeen or 0)) < 600 and peer.mapID == viewedMapID and peer.x and peer.y and peer.x > 0 and peer.y > 0 then
             pinIdx = pinIdx + 1
             local pin = AcquireMapPin(pinIdx, canvas)
             pin.peerData = peer
@@ -393,32 +514,45 @@ function Radar:OnReceiveAlert(charKey, peer, data)
 end
 
 -- -------------------------------------------------------------------------
--- Periodic GPS Ticker & Event Hooks
+-- GuildMap-Style Event & Movement Watcher (Zero Idle Network Traffic!)
 -- -------------------------------------------------------------------------
 ns.RegisterMessage("PLAYER_READY", function()
     if WorldMapFrame and WorldMapFrame.HookScript then
         WorldMapFrame:HookScript("OnShow", function()
+            Radar:UpdateLocalGroupMembers()
             Radar:RefreshWorldMapPins()
         end)
     end
 
     if ns.ScheduleRepeatingTimer then
+        -- Local check every 3s: updates local Party/Raid members (0 network packets!)
+        -- and only sends network GPS if actively traveling across the world (>= 15s cooldown).
         ns:ScheduleRepeatingTimer(function()
             if not ns.db or not ns.db.radar or not ns.db.radar.enabled then return end
-            local _, _, _, x, y = ns.GetPlayerLocationData()
-            local moved = (math.abs((x or 0) - (lastX or 0)) > 0.002) or (math.abs((y or 0) - (lastY or 0)) > 0.002)
-            local interval = moved
-                and ns.SafeNumber(ns.db.sync and ns.db.sync.gpsIntervalMoving, 4)
-                or ns.SafeNumber(ns.db.sync and ns.db.sync.gpsIntervalIdle, 12)
 
-            if (GetTime() - lastBroadcastTime) >= interval then
-                Radar:BroadcastGPS()
+            -- 1. Always refresh Party/Raid members locally via WoW API (0 network traffic)
+            Radar:UpdateLocalGroupMembers()
+
+            -- 2. Only consider network GPS if enough time elapsed (default 15s while moving)
+            local moveInterval = math.max(12, ns.SafeNumber(ns.db.sync and ns.db.sync.gpsIntervalMoving, 15))
+            if (GetTime() - lastBroadcastTime) >= moveInterval then
+                -- BroadcastGPS internally aborts with 0 packets if idle/standing still, in combat, or in instance!
+                Radar:BroadcastGPS(nil, false)
             end
 
             if WorldMapFrame and WorldMapFrame:IsShown() then
                 Radar:RefreshWorldMapPins()
             end
-        end, 2.0)
+        end, 3.0)
+    end
+end)
+
+ns.RegisterEvent("ZONE_CHANGED_NEW_AREA", function()
+    -- Event-driven update when entering a new zone (debounced by 3s)
+    if C_Timer and C_Timer.After then
+        C_Timer.After(3.0, function()
+            Radar:BroadcastGPS(nil, false)
+        end)
     end
 end)
 

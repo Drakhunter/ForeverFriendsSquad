@@ -344,7 +344,7 @@ function QoL:UpdateHUD()
 
     for _, peer in pairs(ns.onlinePeers or {}) do
         local pShort = ns.ShortName(peer.shortName or peer.name or "")
-        if pShort ~= "" and pShort ~= "Unbekannt" and not ns.IsSelfName(pShort) and (now - (peer.lastSeen or 0)) < 180 then
+        if pShort ~= "" and pShort ~= "Unbekannt" and not ns.IsSelfName(pShort) and (now - (peer.lastSeen or 0)) < 600 then
             activePeers[#activePeers + 1] = peer
         end
     end

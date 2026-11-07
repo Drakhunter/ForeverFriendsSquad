@@ -196,9 +196,9 @@ ns.DEFAULTS = {
         usePartyRaid = true,
         useGuild = true,
         onlyTrustedRoster = false,      -- If true, only sync with players added to Squad Roster or BNet/Friends
-        gpsIntervalMoving = 4,          -- Seconds between GPS broadcasts while moving
-        gpsIntervalIdle = 12,           -- Seconds between GPS broadcasts while idle
-        autoBroadcastInventory = true,  -- Sync inventory changes automatically (debounced)
+        gpsIntervalMoving = 15,         -- GuildMap-style: Seconds between GPS broadcasts ONLY while actively moving
+        gpsIntervalIdle = 0,            -- 0 = Never poll GPS when standing still / idle!
+        autoBroadcastInventory = true,  -- Sync inventory changes automatically (hash-checked & debounced)
         autoBroadcastQuests = true,     -- Sync quest progress changes automatically
     },
 

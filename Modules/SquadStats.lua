@@ -23,12 +23,33 @@ function Stats:EnsurePlayerStats()
     return rec.stats, rec
 end
 
+function Stats:ComputeStatsHash(st)
+    if type(st) ~= "table" then return "" end
+    local repSilverBucket = math.floor(ns.SafeNumber(st.repairCopper, 0) / 100)
+    return string.format(
+        "%d:%d:%d:%d:%d",
+        ns.SafeNumber(st.deaths, 0),
+        repSilverBucket,
+        ns.SafeNumber(st.questsCompleted, 0),
+        ns.SafeNumber(st.highRolls, 0),
+        ns.SafeNumber(st.onesRolled, 0)
+    )
+end
+
+function Stats:QueueStatsBroadcast()
+    if ns.Sync and ns.Sync.MarkDirty then
+        ns.Sync:MarkDirty("STATS", 5.0)
+    else
+        self:BroadcastStats()
+    end
+end
+
 function Stats:RecordDeath()
     if not ns.db or not ns.db.stats or not ns.db.stats.enabled or not ns.db.stats.trackDeaths then return end
     local st = self:EnsurePlayerStats()
     if not st then return end
     st.deaths = (st.deaths or 0) + 1
-    self:BroadcastStats()
+    self:QueueStatsBroadcast()
     ns.SendMessage("STATS_UPDATED")
 end
 
@@ -37,7 +58,7 @@ function Stats:RecordQuestCompleted()
     local st = self:EnsurePlayerStats()
     if not st then return end
     st.questsCompleted = (st.questsCompleted or 0) + 1
-    self:BroadcastStats()
+    self:QueueStatsBroadcast()
     ns.SendMessage("STATS_UPDATED")
 end
 
@@ -48,14 +69,20 @@ function Stats:RecordRepairCost(copper)
     local st = self:EnsurePlayerStats()
     if not st then return end
     st.repairCopper = (st.repairCopper or 0) + copper
-    self:BroadcastStats()
+    self:QueueStatsBroadcast()
     ns.SendMessage("STATS_UPDATED")
 end
 
-function Stats:BroadcastStats(whisperTarget)
+function Stats:BroadcastStats(whisperTarget, force)
     if not ns.Sync or not ns.db or not ns.db.stats or not ns.db.stats.enabled then return end
     local st, rec = self:EnsurePlayerStats()
     if not st or not rec then return end
+
+    local stHash = self:ComputeStatsHash(st)
+    local isTargeted = (whisperTarget ~= nil and whisperTarget ~= "")
+    if not isTargeted and not ns.Sync:HasStateChanged("STATS", stHash, force) then
+        return -- Unchanged -> 0 packets sent!
+    end
 
     ns.Sync:Broadcast("STATS", {
         key = rec.key,
@@ -65,6 +92,10 @@ function Stats:BroadcastStats(whisperTarget)
         faction = rec.faction,
         stats = st,
     }, "NORMAL", whisperTarget)
+
+    if not isTargeted then
+        ns.Sync:CommitSentHash("STATS", stHash)
+    end
 end
 
 function Stats:OnReceiveStats(charKey, peer, data)

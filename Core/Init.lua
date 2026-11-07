@@ -167,7 +167,7 @@ local function SetupMinimapButton()
 
             local count = 0
             for _, peer in pairs(ns.onlinePeers or {}) do
-                if (time() - (peer.lastSeen or 0)) < 180 then
+                if (time() - (peer.lastSeen or 0)) < 600 then
                     count = count + 1
                     local nameStr = ns.ColorByClass(peer.shortName or peer.name, peer.class)
                     local zoneStr = ns.SafeString(peer.zone, "Unbekannt")

@@ -309,7 +309,9 @@ function Inventory:ScanOpenTradeSkill()
             profRec.updatedAt = time()
             rec.professions[profName] = profRec
             ns.SendMessage("PROFESSIONS_UPDATED", rec.key, profName)
-            self:BroadcastProfessions()
+            if ns.Sync and ns.Sync.MarkDirty then
+                ns.Sync:MarkDirty("PROF", 3.0)
+            end
             return
         end
     end
@@ -378,19 +380,62 @@ function Inventory:ScanOpenTradeSkill()
             profRec.updatedAt = time()
             rec.professions[profName] = profRec
             ns.SendMessage("PROFESSIONS_UPDATED", rec.key, profName)
-            self:BroadcastProfessions()
+            if ns.Sync and ns.Sync.MarkDirty then
+                ns.Sync:MarkDirty("PROF", 3.0)
+            end
         end
     end
 end
 
 -- -------------------------------------------------------------------------
--- Network Sync Broadcast & Receive
+-- Network Sync Broadcast & Receive (With Strict Content Hash Guard!)
 -- -------------------------------------------------------------------------
+local function SerializeMapSorted(tbl)
+    if type(tbl) ~= "table" then return "" end
+    local parts = {}
+    for k, v in pairs(tbl) do
+        parts[#parts + 1] = tostring(k) .. ":" .. tostring(v)
+    end
+    table.sort(parts)
+    return table.concat(parts, ",")
+end
+
+function Inventory:ComputeInventoryHash(rec)
+    if type(rec) ~= "table" then return "" end
+    -- Bucket money by Gold (10000 copper) so looting 3 copper doesn't trigger a full inventory broadcast
+    local goldBucket = math.floor(ns.SafeNumber(rec.money, 0) / 10000)
+    return string.format(
+        "G:%d|B:%s|K:%s|E:%s",
+        goldBucket,
+        SerializeMapSorted(rec.bags),
+        SerializeMapSorted(rec.bank),
+        SerializeMapSorted(rec.equip)
+    )
+end
+
+function Inventory:ComputeProfessionsHash(rec)
+    if type(rec) ~= "table" or type(rec.professions) ~= "table" then return "" end
+    local pParts = {}
+    for pName, prof in pairs(rec.professions) do
+        if type(prof) == "table" then
+            local rKeys = {}
+            for rKey, rInfo in pairs(prof.recipes or {}) do
+                local rgCnt = (type(rInfo.reagents) == "table") and #rInfo.reagents or 0
+                rKeys[#rKeys + 1] = tostring(rKey) .. "#" .. rgCnt
+            end
+            table.sort(rKeys)
+            pParts[#pParts + 1] = string.format("%s:%d:%d:[%s]", pName, prof.rank or 0, prof.maxRank or 0, table.concat(rKeys, ","))
+        end
+    end
+    table.sort(pParts)
+    return table.concat(pParts, "|")
+end
+
 function Inventory:QueueScanAndSync()
     if scanPending then return end
     scanPending = true
     if C_Timer and C_Timer.After then
-        C_Timer.After(1.2, function()
+        C_Timer.After(1.5, function()
             scanPending = false
             self:ScanBagsAndEquipment(false)
             if ns.db and ns.db.sync and ns.db.sync.autoBroadcastInventory then
@@ -404,26 +449,22 @@ function Inventory:QueueScanAndSync()
 end
 
 function Inventory:QueueBroadcast()
-    if broadcastPending then return end
-    broadcastPending = true
-    if C_Timer and C_Timer.After then
-        C_Timer.After(6.0, function()
-            broadcastPending = false
-            self:BroadcastInventory()
-        end)
-    else
-        broadcastPending = false
-        self:BroadcastInventory()
+    if ns.Sync and ns.Sync.MarkDirty then
+        ns.Sync:MarkDirty("INV", 5.0)
     end
 end
 
-function Inventory:BroadcastInventory(whisperTarget)
+function Inventory:BroadcastInventory(whisperTarget, force)
     if not ns.Sync or not ns.db then return end
     local rec = ns.EnsureCurrentCharacterRecord()
     if not rec then return end
 
-    -- Keep payload ultra-compact (itemID -> count maps only, fits in 1-2 packets!)
-    -- Receiving clients resolve item names/icons locally via GetItemMetadata(itemID).
+    local invHash = self:ComputeInventoryHash(rec)
+    local isTargeted = (whisperTarget ~= nil and whisperTarget ~= "")
+    if not isTargeted and not ns.Sync:HasStateChanged("INV", invHash, force) then
+        return -- Content unchanged (e.g. only sorted bag slots) -> 0 packets sent!
+    end
+
     ns.Sync:Broadcast("INV", {
         key = rec.key,
         name = rec.name,
@@ -438,12 +479,22 @@ function Inventory:BroadcastInventory(whisperTarget)
         bank = rec.bank,
         equip = rec.equip,
     }, "BULK", whisperTarget)
+
+    if not isTargeted then
+        ns.Sync:CommitSentHash("INV", invHash)
+    end
 end
 
-function Inventory:BroadcastProfessions(whisperTarget)
+function Inventory:BroadcastProfessions(whisperTarget, force)
     if not ns.Sync or not ns.db then return end
     local rec = ns.EnsureCurrentCharacterRecord()
     if not rec or not rec.professions or not next(rec.professions) then return end
+
+    local profHash = self:ComputeProfessionsHash(rec)
+    local isTargeted = (whisperTarget ~= nil and whisperTarget ~= "")
+    if not isTargeted and not ns.Sync:HasStateChanged("PROF", profHash, force) then
+        return -- Professions & recipes unchanged -> 0 packets sent!
+    end
 
     -- Compact profession payload (strip redundant icon paths & reagent names over the wire)
     local compactProfs = {}
@@ -486,6 +537,10 @@ function Inventory:BroadcastProfessions(whisperTarget)
         faction = rec.faction,
         professions = compactProfs,
     }, "BULK", whisperTarget)
+
+    if not isTargeted then
+        ns.Sync:CommitSentHash("PROF", profHash)
+    end
 end
 
 function Inventory:OnReceiveInventory(charKey, peer, data)

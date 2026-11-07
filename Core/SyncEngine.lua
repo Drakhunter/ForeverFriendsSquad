@@ -10,9 +10,100 @@ local addonName, ns = ...
 local Sync = {}
 ns.Sync = Sync
 Sync.offlineCache = {} -- [lowerShortName] = timestamp when server reported offline
+Sync.dirty = {}        -- [kind] = true ("INV", "PROF", "QUEST", "STATS")
+Sync.syncedPeers = {}  -- [charKey] = timestamp when we last sent full state to this peer
+local flushPending = false
 
 if ns.Libs.AceComm then
     ns.Libs.AceComm:Embed(Sync)
+end
+
+-- -------------------------------------------------------------------------
+-- Content Fingerprint Guard & Central Coalescer (Zero Idle / Duplicate Traffic)
+-- Persists last-sent hashes in ForeverFriendsCharDB so /reload or bag-sorting
+-- never re-broadcasts unchanged data!
+-- -------------------------------------------------------------------------
+function Sync:GetSentHashes()
+    if ns.charDB then
+        ns.charDB.sentHashes = ns.charDB.sentHashes or {}
+        return ns.charDB.sentHashes
+    end
+    self._fallbackHashes = self._fallbackHashes or {}
+    return self._fallbackHashes
+end
+
+function Sync:HasStateChanged(kind, newHash, force)
+    if force then return true end
+    if not newHash or newHash == "" then return false end
+    local hashes = self:GetSentHashes()
+    return hashes[kind] ~= newHash
+end
+
+function Sync:CommitSentHash(kind, newHash)
+    if not kind or not newHash then return end
+    local hashes = self:GetSentHashes()
+    hashes[kind] = newHash
+end
+
+function Sync:IsPlayerInCombat()
+    if InCombatLockdown and InCombatLockdown() then return true end
+    if UnitAffectingCombat and UnitAffectingCombat("player") then return true end
+    return false
+end
+
+function Sync:ScheduleDirtyFlush(delaySeconds)
+    if flushPending then return end
+    flushPending = true
+    local wait = delaySeconds or 4.5
+    if C_Timer and C_Timer.After then
+        C_Timer.After(wait, function()
+            flushPending = false
+            Sync:FlushDirtyQueue()
+        end)
+    else
+        flushPending = false
+        Sync:FlushDirtyQueue()
+    end
+end
+
+function Sync:MarkDirty(kind, delaySeconds)
+    if not kind then return end
+    self.dirty[kind] = true
+    -- Hold all normal syncs completely silent during combat!
+    if self:IsPlayerInCombat() then
+        return
+    end
+    self:ScheduleDirtyFlush(delaySeconds or 4.5)
+end
+
+function Sync:FlushDirtyQueue()
+    if not ns.db or not ns.db.sync or not ns.db.sync.enabled then return end
+    if self:IsPlayerInCombat() or self:IsMessagingLocked() then
+        -- Wait until combat ends (PLAYER_REGEN_ENABLED)
+        return
+    end
+
+    -- Process one dirty module per flush cycle to keep addon channel completely smooth
+    local order = { "QUEST", "INV", "PROF", "STATS" }
+    for _, kind in ipairs(order) do
+        if self.dirty[kind] then
+            self.dirty[kind] = nil
+            if kind == "QUEST" and ns.Quests then
+                ns.Quests:BroadcastQuests(nil, false)
+            elseif kind == "INV" and ns.Inventory then
+                ns.Inventory:BroadcastInventory(nil, false)
+            elseif kind == "PROF" and ns.Inventory then
+                ns.Inventory:BroadcastProfessions(nil, false)
+            elseif kind == "STATS" and ns.Stats then
+                ns.Stats:BroadcastStats(nil, false)
+            end
+            -- If more dirty flags remain, stagger the next check by 2.5s
+            if next(self.dirty) then
+                self:ScheduleDirtyFlush(2.5)
+            end
+            return
+        end
+    end
 end
 
 -- -------------------------------------------------------------------------
@@ -554,14 +645,20 @@ function Sync:HandleHello(charKey, peer, data, distribution)
     peer.lockouts = ns.SafeNumber(data.lockouts, peer.lockouts or 0)
 
     if data.wantReply then
-        -- Reply over shared channel (GUILD/PARTY/RAID) unless the HELLO came via direct WHISPER
-        local replyWhisper = (distribution == "WHISPER") and peer.shortName or nil
-        self:SendHello(false, replyWhisper)
+        -- Reply with a lightweight 60-byte HELLO only (max once per 45s)
         local nowGT = GetTime and GetTime() or 0
-        if replyWhisper or (nowGT - (self.lastAutoFullSyncAt or 0)) > 25 then
-            self.lastAutoFullSyncAt = nowGT
-            self:BroadcastFullState(false, replyWhisper)
+        local replyWhisper = (distribution == "WHISPER") and peer.shortName or nil
+        if (nowGT - (self.lastHelloReplyAt or 0)) > 45 then
+            self.lastHelloReplyAt = nowGT
+            self:SendHello(false, replyWhisper)
         end
+    end
+
+    -- If we don't have this friend's character data in our DB yet, request it once
+    local knownInDB = ns.db and ns.db.squadCharacters and ns.db.squadCharacters[charKey]
+    if not knownInDB and not self.syncedPeers[charKey] then
+        self.syncedPeers[charKey] = time()
+        self:Broadcast("REQ_SYNC", { ts = time() }, "NORMAL", peer.shortName)
     end
 end
 
@@ -590,24 +687,25 @@ function Sync:BroadcastFullState(verbose, whisperTarget)
     end
 
     self:PurgeSelfFromPeers()
+    local force = (verbose == true) or (whisperTarget ~= nil and whisperTarget ~= "")
 
     if ns.Inventory then
         ns.Inventory:ScanBagsAndEquipment(true)
-        ns.Inventory:BroadcastInventory(whisperTarget)
-        ns.Inventory:BroadcastProfessions(whisperTarget)
+        ns.Inventory:BroadcastInventory(whisperTarget, force)
+        ns.Inventory:BroadcastProfessions(whisperTarget, force)
     end
 
     if ns.Quests then
         ns.Quests:ScanQuestLog(true)
-        ns.Quests:BroadcastQuests(whisperTarget)
+        ns.Quests:BroadcastQuests(whisperTarget, force)
     end
 
     if ns.Radar then
-        ns.Radar:BroadcastGPS(whisperTarget)
+        ns.Radar:BroadcastGPS(whisperTarget, force)
     end
 
     if ns.Stats then
-        ns.Stats:BroadcastStats(whisperTarget)
+        ns.Stats:BroadcastStats(whisperTarget, force)
     end
 
     if verbose then
@@ -688,21 +786,29 @@ ns.RegisterMessage("PLAYER_READY", function()
         C_Timer.After(2.0, function()
             Sync:PurgeSelfFromPeers()
             Sync:LeaveCustomChannel()
+            -- Send only a single lightweight 60-byte HELLO on login/reload
             Sync:SendHello(true)
-        end)
-        C_Timer.After(4.5, function()
-            Sync:BroadcastFullState(false)
+            -- Queue hash-checked check: only sends modules whose hash actually changed since last session!
+            Sync:MarkDirty("QUEST", 5.0)
+            Sync:MarkDirty("INV", 5.0)
+            Sync:MarkDirty("PROF", 5.0)
+            Sync:MarkDirty("STATS", 5.0)
         end)
     else
         Sync:SendHello(true)
     end
 end)
 
+ns.RegisterEvent("PLAYER_REGEN_ENABLED", function()
+    -- Flush any non-urgent changes that were held silent during combat
+    if next(Sync.dirty) then
+        Sync:ScheduleDirtyFlush(3.5)
+    end
+end)
+
 ns.RegisterEvent("GROUP_ROSTER_UPDATE", function()
-    if C_Timer and C_Timer.After then
-        C_Timer.After(1.5, function()
-            Sync:SendHello(false)
-        end)
+    if ns.Radar and ns.Radar.UpdateLocalGroupMembers then
+        ns.Radar:UpdateLocalGroupMembers()
     end
 end)
 

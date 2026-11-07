@@ -133,11 +133,23 @@ end
 -- -------------------------------------------------------------------------
 -- Network Broadcast & Receive
 -- -------------------------------------------------------------------------
+function Quests:ComputeQuestsHash(rec)
+    if type(rec) ~= "table" or type(rec.quests) ~= "table" then return "" end
+    local parts = {}
+    for qKey, q in pairs(rec.quests) do
+        if type(q) == "table" then
+            parts[#parts + 1] = string.format("%s:%s:%s", tostring(qKey), tostring(q.progressText or ""), q.isComplete and "1" or "0")
+        end
+    end
+    table.sort(parts)
+    return table.concat(parts, "|")
+end
+
 function Quests:QueueScanAndSync()
     if questScanPending then return end
     questScanPending = true
     if C_Timer and C_Timer.After then
-        C_Timer.After(0.8, function()
+        C_Timer.After(1.2, function()
             questScanPending = false
             self:ScanQuestLog(false)
             if ns.db and ns.db.sync and ns.db.sync.autoBroadcastQuests then
@@ -151,23 +163,21 @@ function Quests:QueueScanAndSync()
 end
 
 function Quests:QueueBroadcast()
-    if questBroadcastPending then return end
-    questBroadcastPending = true
-    if C_Timer and C_Timer.After then
-        C_Timer.After(2.0, function()
-            questBroadcastPending = false
-            self:BroadcastQuests()
-        end)
-    else
-        questBroadcastPending = false
-        self:BroadcastQuests()
+    if ns.Sync and ns.Sync.MarkDirty then
+        ns.Sync:MarkDirty("QUEST", 3.5)
     end
 end
 
-function Quests:BroadcastQuests(whisperTarget)
+function Quests:BroadcastQuests(whisperTarget, force)
     if not ns.Sync or not ns.db or not ns.db.quests or not ns.db.quests.enabled then return end
     local rec = ns.EnsureCurrentCharacterRecord()
     if not rec then return end
+
+    local questHash = self:ComputeQuestsHash(rec)
+    local isTargeted = (whisperTarget ~= nil and whisperTarget ~= "")
+    if not isTargeted and not ns.Sync:HasStateChanged("QUEST", questHash, force) then
+        return -- Questlog & progress unchanged (ignores QUEST_LOG_UPDATE false alarms!) -> 0 packets sent!
+    end
 
     ns.Sync:Broadcast("QUEST", {
         key = rec.key,
@@ -177,6 +187,10 @@ function Quests:BroadcastQuests(whisperTarget)
         faction = rec.faction,
         quests = rec.quests or {},
     }, "NORMAL", whisperTarget)
+
+    if not isTargeted then
+        ns.Sync:CommitSentHash("QUEST", questHash)
+    end
 end
 
 function Quests:OnReceiveQuests(charKey, peer, data)

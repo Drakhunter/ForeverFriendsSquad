@@ -985,7 +985,7 @@ local function BuildRadarView(parent)
                     hpPct = peer.hpPct or 100,
                     lockouts = peer.lockouts or 0,
                     lastSeen = peer.lastSeen or 0,
-                    isOnline = ((now - (peer.lastSeen or 0)) < 180) or (confirmedOnline[lower] ~= nil),
+                    isOnline = ((now - (peer.lastSeen or 0)) < 600) or (confirmedOnline[lower] ~= nil),
                 }
                 if ns.MatchesGlobalFilter(entry, false, pFac) then
                     entries[#entries + 1] = entry
@@ -1494,7 +1494,7 @@ local function EnsureMainFrame()
         local myShortLower = ns.GetPlayerShortName():lower()
         for _, peer in pairs(ns.onlinePeers or {}) do
             local pShort = ns.ShortName(peer.shortName or peer.name or ""):lower()
-            if pShort ~= "" and pShort ~= "unbekannt" and pShort ~= myShortLower and (now - (peer.lastSeen or 0)) < 180 then
+            if pShort ~= "" and pShort ~= "unbekannt" and pShort ~= myShortLower and (now - (peer.lastSeen or 0)) < 600 then
                 onlineCount = onlineCount + 1
             end
         end
