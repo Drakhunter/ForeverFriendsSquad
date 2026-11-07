@@ -1,0 +1,41 @@
+## Interface: 16001, 120100, 120105, 120107
+## Title: ForeverFriends |cff38bdf8[Squad Hub]|r
+## Notes: All-in-One Squad & Friends Hub for WoW: Forever — Shared Inventory/Bank/Alts, Profession & Reagent Browser, Live Quest Sync, World Map Radar & Group QoL.
+## Notes-deDE: All-in-One Stammgruppen-Addon für WoW: Forever — Gemeinsames Inventar/Bank/Twinks, Berufe- & Mats-Browser, Live-Quest-Sync, Weltkarten-Radar & Gruppen-Komfort.
+## Author: SquadTeam
+## Version: @project-version@
+## SavedVariables: ForeverFriendsDB
+## SavedVariablesPerCharacter: ForeverFriendsCharDB
+## IconTexture: Interface\AddOns\ForeverFriends\Media\logo
+## AddonCompartmentFunc: ForeverFriends_OnAddonCompartmentClick
+## AddonCompartmentFuncOnEnter: ForeverFriends_OnAddonCompartmentEnter
+## AddonCompartmentFuncOnLeave: ForeverFriends_OnAddonCompartmentLeave
+## OptionalDeps: Ace3, LibSharedMedia-3.0, LibDBIcon-1.0, LibDeflate, LibSerialize
+## X-Category: Guild, Quests & Leveling, Inventory, Map & Minimap
+## X-Flavor: Forever
+## X-License: MIT
+## X-Curse-Project-ID: 0000000
+## X-Wago-ID: 00000000
+## X-Website: https://github.com/YOUR_USERNAME/ForeverFriends
+
+# Embedded Libraries (Ace3 + LibSharedMedia + LibDBIcon + Compression)
+embeds.xml
+
+# Core Architecture & Sync Transport
+Core\Constants.lua
+Core\Utils.lua
+Core\Init.lua
+Core\SyncEngine.lua
+
+# Feature Modules (Prioritized)
+Modules\InventorySync.lua
+Modules\QuestSync.lua
+Modules\WorldRadar.lua
+Modules\GroupQoL.lua
+Modules\SquadStats.lua
+
+# Modern Scalable UI & Customization
+UI\ThemeEngine.lua
+UI\Widgets.lua
+UI\MainFrame.lua
+UI\SettingsPanel.lua

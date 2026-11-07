@@ -1,0 +1,15 @@
+# OS & Editor files
+.DS_Store
+Thumbs.db
+Desktop.ini
+*.bak
+*.tmp
+*.swp
+*~
+.vscode/
+.idea/
+
+# Build & Release artifacts
+*.zip
+.release/
+README.mdgit
