@@ -24,68 +24,91 @@ local lastX, lastY = 0, 0
 -- for any friend who is currently in your Party or Raid.
 -- -------------------------------------------------------------------------
 function Radar:UpdateLocalGroupMembers()
-    if not IsInGroup or not IsInGroup() then return false end
-    local isRaid = IsInRaid and IsInRaid()
-    local count = isRaid and (GetNumGroupMembers and GetNumGroupMembers() or 0) or (GetNumSubgroupMembers and GetNumSubgroupMembers() or 0)
+    local isInGroup = IsInGroup and IsInGroup()
+    local currentGroupLogins = {}
     local updatedAny = false
     local now = time()
 
-    for i = 1, count do
-        local unit = isRaid and ("raid" .. i) or ("party" .. i)
-        if UnitExists and UnitExists(unit) and not (UnitIsUnit and UnitIsUnit(unit, "player")) then
-            local short = ns.GetUnitName(unit)
-            if short ~= "" and short ~= "Unbekannt" and not ns.IsSelfName(short) then
-                local charKey = ns.NormalizeCharKey(short)
-                local peer = ns.onlinePeers[charKey] or {}
+    if isInGroup then
+        local isRaid = IsInRaid and IsInRaid()
+        local count = isRaid and (GetNumGroupMembers and GetNumGroupMembers() or 0) or (GetNumSubgroupMembers and GetNumSubgroupMembers() or 0)
 
-                local _, classFile = UnitClass and UnitClass(unit)
-                local lvl = UnitLevel and UnitLevel(unit)
-                local fac = UnitFactionGroup and select(1, UnitFactionGroup(unit))
+        for i = 1, count do
+            local unit = isRaid and ("raid" .. i) or ("party" .. i)
+            if UnitExists and UnitExists(unit) and not (UnitIsUnit and UnitIsUnit(unit, "player")) then
+                local short = ns.GetUnitName(unit)
+                if short ~= "" and short ~= "Unbekannt" and not ns.IsSelfName(short) and not ns.IsDismissedPeer(short) then
+                    local charKey = ns.NormalizeCharKey(short)
+                    currentGroupLogins[charKey] = true
+                    local isExisting = (ns.onlinePeers[charKey] ~= nil)
+                    local peer = ns.onlinePeers[charKey] or {}
 
-                local hpCur = ns.SafeNumber(UnitHealth and UnitHealth(unit), 100)
-                local hpMax = math.max(1, ns.SafeNumber(UnitHealthMax and UnitHealthMax(unit), 100))
-                local hpPct = math.floor((hpCur / hpMax) * 100 + 0.5)
+                    local _, classFile = UnitClass and UnitClass(unit)
+                    local lvl = UnitLevel and UnitLevel(unit)
+                    local fac = UnitFactionGroup and select(1, UnitFactionGroup(unit))
 
-                local mCur = ns.SafeNumber(UnitPower and UnitPower(unit, 0), 100)
-                local mMax = math.max(1, ns.SafeNumber(UnitPowerMax and UnitPowerMax(unit, 0), 100))
-                local manaPct = math.floor((mCur / mMax) * 100 + 0.5)
+                    local hpCur = ns.SafeNumber(UnitHealth and UnitHealth(unit), 100)
+                    local hpMax = math.max(1, ns.SafeNumber(UnitHealthMax and UnitHealthMax(unit), 100))
+                    local hpPct = math.floor((hpCur / hpMax) * 100 + 0.5)
 
-                local mapID = (C_Map and C_Map.GetBestMapForUnit and ns.SafeNumber(C_Map.GetBestMapForUnit(unit), 0)) or peer.mapID or 0
-                local x, y = peer.x or 0, peer.y or 0
-                if mapID > 0 and C_Map and C_Map.GetPlayerMapPosition then
-                    local okPos, pos = pcall(C_Map.GetPlayerMapPosition, mapID, unit)
-                    if okPos and pos and not ns.IsSecret(pos) and pos.GetXY then
-                        local px, py = pos:GetXY()
-                        x = ns.SafeNumber(px, x)
-                        y = ns.SafeNumber(py, y)
+                    local mCur = ns.SafeNumber(UnitPower and UnitPower(unit, 0), 100)
+                    local mMax = math.max(1, ns.SafeNumber(UnitPowerMax and UnitPowerMax(unit, 0), 100))
+                    local manaPct = math.floor((mCur / mMax) * 100 + 0.5)
+
+                    local mapID = (C_Map and C_Map.GetBestMapForUnit and ns.SafeNumber(C_Map.GetBestMapForUnit(unit), 0)) or peer.mapID or 0
+                    local x, y = peer.x or 0, peer.y or 0
+                    if mapID > 0 and C_Map and C_Map.GetPlayerMapPosition then
+                        local okPos, pos = pcall(C_Map.GetPlayerMapPosition, mapID, unit)
+                        if okPos and pos and not ns.IsSecret(pos) and pos.GetXY then
+                            local px, py = pos:GetXY()
+                            x = ns.SafeNumber(px, x)
+                            y = ns.SafeNumber(py, y)
+                        end
                     end
-                end
 
-                local zoneName = peer.zone
-                if mapID > 0 and C_Map and C_Map.GetMapInfo then
-                    local okMap, mInfo = pcall(C_Map.GetMapInfo, mapID)
-                    if okMap and mInfo and not ns.IsSecret(mInfo) and mInfo.name then
-                        zoneName = ns.SafeString(mInfo.name, zoneName)
+                    local zoneName = peer.zone
+                    if mapID > 0 and C_Map and C_Map.GetMapInfo then
+                        local okMap, mInfo = pcall(C_Map.GetMapInfo, mapID)
+                        if okMap and mInfo and not ns.IsSecret(mInfo) and mInfo.name then
+                            zoneName = ns.SafeString(mInfo.name, zoneName)
+                        end
                     end
-                end
 
-                peer.key = charKey
-                peer.name = short
-                peer.shortName = short
-                peer.class = ns.SafeString(classFile, peer.class or "WARRIOR")
-                if lvl and not ns.IsSecret(lvl) and lvl > 0 then peer.level = lvl end
-                peer.faction = ns.NormalizeFaction(fac or peer.faction or ns.GetPlayerFaction())
-                peer.zone = zoneName or "In Gruppe"
-                peer.mapID = mapID
-                peer.x = x
-                peer.y = y
-                peer.hpPct = hpPct
-                peer.manaPct = manaPct
-                peer.inCombat = ns.SafeBoolean(UnitAffectingCombat and UnitAffectingCombat(unit))
-                peer.isDead = ns.SafeBoolean(UnitIsDeadOrGhost and UnitIsDeadOrGhost(unit))
-                peer.lastSeen = now
-                ns.onlinePeers[charKey] = peer
+                    -- Mark if this person was only added because they are in our current group (not a saved friend/roster member)
+                    if not isExisting and not ns.IsInSquadRoster(short) and not ns.IsOnWoWFriendList(short) then
+                        peer.localGroupOnly = true
+                    end
+
+                    peer.key = charKey
+                    peer.name = short
+                    peer.shortName = short
+                    peer.class = ns.SafeString(classFile, peer.class or "WARRIOR")
+                    if lvl and not ns.IsSecret(lvl) and lvl > 0 then peer.level = lvl end
+                    peer.faction = ns.NormalizeFaction(fac or peer.faction or ns.GetPlayerFaction())
+                    peer.zone = zoneName or "In Gruppe"
+                    peer.mapID = mapID
+                    peer.x = x
+                    peer.y = y
+                    peer.hpPct = hpPct
+                    peer.manaPct = manaPct
+                    peer.inCombat = ns.SafeBoolean(UnitAffectingCombat and UnitAffectingCombat(unit))
+                    peer.isDead = ns.SafeBoolean(UnitIsDeadOrGhost and UnitIsDeadOrGhost(unit))
+                    peer.lastSeen = now
+                    ns.onlinePeers[charKey] = peer
+                    updatedAny = true
+                end
+            end
+        end
+    end
+
+    -- Automatically prune temporary random party members as soon as they are no longer in our group!
+    for k, peer in pairs(ns.onlinePeers or {}) do
+        if peer.localGroupOnly and not currentGroupLogins[k] then
+            if not ns.IsInSquadRoster(peer.shortName or peer.name) and not ns.IsOnWoWFriendList(peer.shortName or peer.name) then
+                ns.onlinePeers[k] = nil
                 updatedAny = true
+            else
+                peer.localGroupOnly = nil
             end
         end
     end

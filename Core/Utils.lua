@@ -623,30 +623,94 @@ function ns.SetMapWaypoint(mapID, x, y, label)
 end
 
 -- -------------------------------------------------------------------------
--- Squad Trust / Friend Verification
+-- Squad Trust / Friend Verification & Relationship Classification
+-- Distinguishes between:
+-- 1) Explicit Squad Roster ("SQUAD")
+-- 2) WoW / Battle.net Friend List ("FRIEND")
+-- 3) Guild Sync Peer ("GUILD")
+-- 4) Temporary Party/Raid Member ("GROUP_ONLY")
 -- -------------------------------------------------------------------------
-function ns.IsSquadOrFriend(sender)
-    local short = ns.ShortName(sender)
-    local full = ns.NormalizeCharKey(sender)
-    if short == ns.GetPlayerShortName() then return true end
+ns.dismissedPeers = {} -- [lowerShortName] = true (prevents removed group members from re-appearing in the same session)
 
-    if ns.db and ns.db.squadRoster then
-        if ns.db.squadRoster[short] or ns.db.squadRoster[full] or ns.db.squadRoster[short:lower()] then
+function ns.IsDismissedPeer(name)
+    local short = ns.ShortName(name)
+    if short == "" then return false end
+    return ns.dismissedPeers[short:lower()] == true
+end
+
+function ns.IsInSquadRoster(name)
+    if not ns.db or not ns.db.squadRoster then return false end
+    local short = ns.ShortName(name)
+    local lower = short:lower()
+    if short == "" then return false end
+    for k in pairs(ns.db.squadRoster) do
+        if ns.ShortName(k):lower() == lower then
             return true
         end
     end
+    return false
+end
 
-    if C_FriendList and C_FriendList.IsFriend then
-        -- Also check character friend list if available
-        local numFriends = C_FriendList.GetNumFriends and C_FriendList.GetNumFriends() or 0
-        if not ns.IsSecret(numFriends) and numFriends > 0 then
-            for i = 1, numFriends do
-                local info = C_FriendList.GetFriendInfoByIndex and C_FriendList.GetFriendInfoByIndex(i)
-                if info and not ns.IsSecret(info.name) and ns.ShortName(info.name):lower() == short:lower() then
+function ns.IsOnWoWFriendList(name)
+    local short = ns.ShortName(name)
+    local lower = short:lower()
+    if lower == "" then return false end
+
+    if C_FriendList and C_FriendList.GetNumFriends and C_FriendList.GetFriendInfoByIndex then
+        local ok, numFriends = pcall(C_FriendList.GetNumFriends)
+        numFriends = ok and ns.SafeNumber(numFriends, 0) or 0
+        for i = 1, numFriends do
+            local okInfo, info = pcall(C_FriendList.GetFriendInfoByIndex, i)
+            if okInfo and info and not ns.IsSecret(info) and info.name and not ns.IsSecret(info.name) then
+                if ns.ShortName(info.name):lower() == lower then
                     return true
                 end
             end
         end
+    end
+
+    if C_BattleNet and C_BattleNet.GetNumFriends and C_BattleNet.GetFriendAccountInfo then
+        local ok, numBNet = pcall(C_BattleNet.GetNumFriends)
+        numBNet = ok and ns.SafeNumber(numBNet, 0) or 0
+        for i = 1, numBNet do
+            local okAcc, acc = pcall(C_BattleNet.GetFriendAccountInfo, i)
+            if okAcc and acc and not ns.IsSecret(acc) and acc.gameAccountInfo and not ns.IsSecret(acc.gameAccountInfo) then
+                local charName = ns.SafeString(acc.gameAccountInfo.characterName, "")
+                if charName ~= "" and ns.ShortName(charName):lower() == lower then
+                    return true
+                end
+            end
+        end
+    end
+
+    return false
+end
+
+function ns.GetPeerRelationship(name, peerData)
+    local short = ns.ShortName(name)
+    local inSquad = ns.IsInSquadRoster(short)
+    local isWoWFriend = ns.IsOnWoWFriendList(short)
+    local inGroup = (UnitInParty and UnitInParty(short)) or (UnitInRaid and UnitInRaid(short)) or false
+
+    if inSquad then
+        return "SQUAD", "|cff34d399[Stammgruppe]|r", true, inGroup
+    elseif isWoWFriend then
+        return "FRIEND", "|cff38bdf8[Freund]|r", true, inGroup
+    elseif inGroup or (peerData and peerData.localGroupOnly) then
+        return "GROUP_ONLY", "|cfffbbf24[Nur Gruppe]|r", false, true
+    elseif peerData and peerData.distribution == "GUILD" then
+        return "GUILD", "|cff94a3b8[Gilde]|r", false, false
+    end
+    return "OTHER", "|cff94a3b8[Sync]|r", false, inGroup
+end
+
+function ns.IsSquadOrFriend(sender)
+    local short = ns.ShortName(sender)
+    if short == ns.GetPlayerShortName() then return true end
+    if ns.IsDismissedPeer(short) then return false end
+
+    if ns.IsInSquadRoster(short) or ns.IsOnWoWFriendList(short) then
+        return true
     end
 
     if UnitInParty and UnitInParty(short) then return true end
@@ -663,23 +727,81 @@ function ns.AddToSquadRoster(name, note)
     if not ns.db then return end
     local short = ns.ShortName(strtrim(ns.SafeString(name, "")))
     if short == "" then return false end
+    local lower = short:lower()
+    ns.dismissedPeers[lower] = nil
     ns.db.squadRoster = ns.db.squadRoster or {}
+
+    -- Clean up any duplicate case-variant key first
+    for k in pairs(ns.db.squadRoster) do
+        if ns.ShortName(k):lower() == lower and k ~= short then
+            ns.db.squadRoster[k] = nil
+        end
+    end
+
     ns.db.squadRoster[short] = {
         name = short,
         note = ns.SafeString(note, ""),
         trusted = true,
         addedAt = time(),
     }
+
+    -- If this peer is already in onlinePeers, mark them as permanent (not localGroupOnly)
+    for _, peer in pairs(ns.onlinePeers or {}) do
+        if ns.ShortName(peer.shortName or peer.name):lower() == lower then
+            peer.localGroupOnly = nil
+        end
+    end
+
     ns.Print("Zur Stammgruppe hinzugefügt: |cff34d399" .. short .. "|r")
-    if ns.SendMessage then ns.SendMessage("ROSTER_UPDATED") end
+    if ns.SendMessage then
+        ns.SendMessage("ROSTER_UPDATED")
+        ns.SendMessage("PEER_UPDATED")
+    end
     return true
 end
 
 function ns.RemoveFromSquadRoster(name)
-    if not ns.db or not ns.db.squadRoster then return end
+    if not ns.db then return end
     local short = ns.ShortName(strtrim(ns.SafeString(name, "")))
-    ns.db.squadRoster[short] = nil
-    ns.db.squadRoster[short:lower()] = nil
-    ns.Print("Aus Stammgruppe entfernt: |cfff87171" .. short .. "|r")
-    if ns.SendMessage then ns.SendMessage("ROSTER_UPDATED") end
+    if short == "" then return end
+    local lower = short:lower()
+
+    -- Remember dismissal for the current session so random party members don't immediately re-appear
+    ns.dismissedPeers[lower] = true
+
+    -- 1. Remove from squadRoster (case-insensitive)
+    if ns.db.squadRoster then
+        for k in pairs(ns.db.squadRoster) do
+            if ns.ShortName(k):lower() == lower or k:lower() == lower then
+                ns.db.squadRoster[k] = nil
+            end
+        end
+    end
+
+    -- 2. Remove from live onlinePeers radar table
+    for k, peer in pairs(ns.onlinePeers or {}) do
+        local pShort = ns.ShortName(peer.shortName or peer.name or k):lower()
+        if pShort == lower or k:lower() == lower then
+            ns.onlinePeers[k] = nil
+        end
+    end
+
+    -- 3. Remove from cached squadCharacters database (Inventory, Professions, Quests, Stats)
+    if ns.db.squadCharacters then
+        for k, rec in pairs(ns.db.squadCharacters) do
+            local rShort = ns.ShortName(rec.name or k):lower()
+            if rShort == lower or k:lower() == lower then
+                ns.db.squadCharacters[k] = nil
+            end
+        end
+    end
+
+    ns.Print("Aus Liste & Datenbank entfernt: |cfff87171" .. short .. "|r")
+    if ns.SendMessage then
+        ns.SendMessage("ROSTER_UPDATED")
+        ns.SendMessage("PEER_UPDATED")
+        ns.SendMessage("INVENTORY_UPDATED")
+        ns.SendMessage("QUESTS_UPDATED")
+        ns.SendMessage("STATS_UPDATED")
+    end
 end

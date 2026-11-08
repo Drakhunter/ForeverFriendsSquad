@@ -812,36 +812,77 @@ end
 
 -- -------------------------------------------------------------------------
 -- View 4: World Radar, Squad Roster & Group QoL
+-- Distinguishes between permanent Friends/Squad Roster and temporary Group
+-- members, and allows removing any entry (online or offline) at any time.
 -- -------------------------------------------------------------------------
 local function BuildRadarView(parent)
     local view = CreateFrame("Frame", nil, parent)
     view:SetAllPoints()
+    view.relFilter = "ALL" -- "ALL", "FRIENDS_ONLY", "GROUP_ONLY"
 
-    local nameInput = UI.CreateSearchBox(view, 190, 26, "Freund-Name eingeben...", nil)
+    local nameInput = UI.CreateSearchBox(view, 165, 26, "Freund-Name eingeben...", nil)
     nameInput:SetPoint("TOPLEFT", view, "TOPLEFT", 12, -12)
 
-    local addBtn = UI.CreateButton(view, "+ Zur Stammgruppe", 136, 26, function()
+    local addBtn = UI.CreateButton(view, "+ Stammgruppe", 112, 26, function()
         local txt = strtrim(nameInput:GetText() or "")
-        if txt ~= "" and txt:lower() ~= ns.GetPlayerShortName():lower() then
+        if txt ~= "" and not ns.IsSelfName(txt) then
             ns.AddToSquadRoster(txt)
             nameInput:SetText("")
             nameInput:ClearFocus()
             view:RefreshData()
         end
     end, true)
-    addBtn:SetPoint("LEFT", nameInput, "RIGHT", 8, 0)
+    addBtn:SetPoint("LEFT", nameInput, "RIGHT", 6, 0)
 
-    local inviteAllBtn = UI.CreateButton(view, "Alle Einladen", 110, 26, function()
+    local REL_LABELS = {
+        ALL          = "|cffe2e8f0Zeige: Alle|r",
+        FRIENDS_ONLY = "|cff34d399Nur Freunde / Stamm|r",
+        GROUP_ONLY   = "|cfffbbf24Nur aktuelle Gruppe|r",
+    }
+    local relDropdown = UI.CreateDropdown(view, 155, 26, function()
+        return REL_LABELS[view.relFilter] or REL_LABELS.ALL
+    end, function()
+        return {
+            {
+                text = "Alle anzeigen (Freunde & Gruppe)",
+                isSelected = (view.relFilter == "ALL"),
+                onClick = function()
+                    view.relFilter = "ALL"
+                    view:RefreshData()
+                end,
+            },
+            {
+                text = "|cff34d399Nur Stammgruppe & Freundesliste|r",
+                isSelected = (view.relFilter == "FRIENDS_ONLY"),
+                onClick = function()
+                    view.relFilter = "FRIENDS_ONLY"
+                    view:RefreshData()
+                end,
+            },
+            {
+                text = "|cfffbbf24Nur aktuelle Gruppe (inkl. Randoms)|r",
+                isSelected = (view.relFilter == "GROUP_ONLY"),
+                onClick = function()
+                    view.relFilter = "GROUP_ONLY"
+                    view:RefreshData()
+                end,
+            },
+        }
+    end)
+    relDropdown:SetPoint("LEFT", addBtn, "RIGHT", 8, 0)
+    view.relDropdown = relDropdown
+
+    local inviteAllBtn = UI.CreateButton(view, "Stamm Einladen", 104, 26, function()
         if ns.InviteSquadMembers then ns.InviteSquadMembers() end
     end)
-    inviteAllBtn:SetPoint("LEFT", addBtn, "RIGHT", 10, 0)
+    inviteAllBtn:SetPoint("LEFT", relDropdown, "RIGHT", 8, 0)
 
-    local buffCheckBtn = UI.CreateButton(view, "Buff-Check", 96, 26, function()
+    local buffCheckBtn = UI.CreateButton(view, "Buffs", 56, 26, function()
         if ns.QoL and ns.QoL.RunBuffCheck then ns.QoL:RunBuffCheck() end
     end)
-    buffCheckBtn:SetPoint("LEFT", inviteAllBtn, "RIGHT", 8, 0)
+    buffCheckBtn:SetPoint("LEFT", inviteAllBtn, "RIGHT", 6, 0)
 
-    local sosBtn = UI.CreateButton(view, "SOS Notruf!", 100, 26, function()
+    local sosBtn = UI.CreateButton(view, "SOS!", 58, 26, function()
         if ns.Radar and ns.Radar.SendSOSAlert then
             ns.Radar:SendSOSAlert("Brauche Hilfe an meiner Position!")
         end
@@ -864,35 +905,58 @@ local function BuildRadarView(parent)
         row.statusDot = statusDot
 
         local nameText = row:CreateFontString(nil, "OVERLAY", "GameFontNormal")
-        nameText:SetPoint("LEFT", statusDot, "RIGHT", 10, 0)
-        nameText:SetWidth(175)
+        nameText:SetPoint("LEFT", statusDot, "RIGHT", 8, 0)
+        nameText:SetWidth(220)
         nameText:SetJustifyH("LEFT")
+        nameText:SetWordWrap(false)
         row.nameText = nameText
 
         local locText = row:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-        locText:SetPoint("LEFT", nameText, "RIGHT", 8, 0)
-        locText:SetWidth(205)
+        locText:SetPoint("LEFT", nameText, "RIGHT", 6, 0)
+        locText:SetWidth(165)
         locText:SetJustifyH("LEFT")
+        locText:SetWordWrap(false)
         row.locText = locText
 
         local vitalsText = row:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-        vitalsText:SetPoint("LEFT", locText, "RIGHT", 8, 0)
-        vitalsText:SetWidth(120)
+        vitalsText:SetPoint("LEFT", locText, "RIGHT", 6, 0)
+        vitalsText:SetWidth(105)
         vitalsText:SetJustifyH("LEFT")
+        vitalsText:SetWordWrap(false)
         row.vitalsText = vitalsText
 
-        local pinBtn = UI.CreateButton(row, "Karten-Pin", 80, 24, function(self)
+        -- Always-available Remove ('×') button on the far right (works for both online & offline entries!)
+        local delBtn = UI.CreateButton(row, "×", 26, 24, function(self)
             local d = self:GetParent().peerData
-            if d and d.mapID and d.x then
-                ns.SetMapWaypoint(d.mapID, d.x, d.y, d.shortName or d.name)
+            if d and (d.shortName or d.name) then
+                ns.RemoveFromSquadRoster(d.shortName or d.name)
+                view:RefreshData()
             end
         end)
-        pinBtn:SetPoint("RIGHT", row, "RIGHT", -90, 0)
-        row.pinBtn = pinBtn
+        delBtn:SetPoint("RIGHT", row, "RIGHT", -8, 0)
+        delBtn:SetScript("OnEnter", function(self)
+            local t = ns.GetActiveTheme()
+            UI.ApplySurface(self, t.danger, t.border, 1)
+            GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+            GameTooltip:SetText("Aus Liste & Datenbank entfernen", 1, 0.35, 0.35)
+            GameTooltip:AddLine("Entfernt diesen Charakter aus der Stammgruppe, dem Radar sowie den gecachten Inventar-/Quest-Daten.", 0.85, 0.85, 0.85, true)
+            GameTooltip:Show()
+        end)
+        delBtn:SetScript("OnLeave", function(self)
+            self:RefreshStyle()
+            GameTooltip:Hide()
+        end)
+        row.delBtn = delBtn
 
-        local invBtn = UI.CreateButton(row, "Einladen", 74, 24, function(self)
+        -- Action button 1 (Invite to group OR '+ Stamm' if not yet in squadRoster)
+        local invBtn = UI.CreateButton(row, "Einladen", 68, 24, function(self)
             local d = self:GetParent().peerData
-            if d and d.shortName and d.isOnline then
+            if not d or not d.shortName then return end
+            if d.inGroup and not d.isSquadRoster then
+                -- Already in group, so button promotes them to permanent Squad Roster!
+                ns.AddToSquadRoster(d.shortName)
+                view:RefreshData()
+            elseif d.isOnline then
                 if C_PartyInfo and C_PartyInfo.InviteUnit then
                     pcall(C_PartyInfo.InviteUnit, d.shortName)
                 elseif InviteUnit then
@@ -900,18 +964,18 @@ local function BuildRadarView(parent)
                 end
             end
         end)
-        invBtn:SetPoint("RIGHT", row, "RIGHT", -8, 0)
+        invBtn:SetPoint("RIGHT", delBtn, "LEFT", -5, 0)
         row.invBtn = invBtn
 
-        local delBtn = UI.CreateButton(row, "Entf.", 60, 24, function(self)
+        -- Map Waypoint Pin button
+        local pinBtn = UI.CreateButton(row, "Pin", 46, 24, function(self)
             local d = self:GetParent().peerData
-            if d and d.shortName then
-                ns.RemoveFromSquadRoster(d.shortName)
-                view:RefreshData()
+            if d and d.mapID and d.x then
+                ns.SetMapWaypoint(d.mapID, d.x, d.y, d.shortName or d.name)
             end
         end)
-        delBtn:SetPoint("RIGHT", row, "RIGHT", -8, 0)
-        row.delBtn = delBtn
+        pinBtn:SetPoint("RIGHT", invBtn, "LEFT", -5, 0)
+        row.pinBtn = pinBtn
 
         return row
     end, function(row, data)
@@ -922,8 +986,11 @@ local function BuildRadarView(parent)
             row.statusDot:SetVertexColor(0.45, 0.50, 0.58, 1)
         end
 
-        local lvlStr = (data.level and data.level > 0) and string.format(" |cff94a3b8(Lv %d)|r", data.level) or ""
-        row.nameText:SetText(ns.FormatCharacterDisplay(data.shortName or data.name, data.class, data.faction, true) .. lvlStr)
+        local lvlStr = (data.level and data.level > 0) and string.format(" |cff94a3b8Lv%d|r", data.level) or ""
+        local relBadge = data.relBadge and (" " .. data.relBadge) or ""
+        row.nameText:SetText(ns.FormatCharacterDisplay(data.shortName or data.name, data.class, data.faction, true) .. lvlStr .. relBadge)
+
+        row.delBtn:Show()
 
         if data.isOnline then
             local coord = (data.x and data.x > 0) and string.format(" |cff38bdf8(%.1f, %.1f)|r", data.x * 100, data.y * 100) or ""
@@ -934,14 +1001,21 @@ local function BuildRadarView(parent)
             else
                 row.pinBtn:Hide()
             end
-            row.invBtn:Show()
-            row.delBtn:Hide()
+
+            if data.inGroup and not data.isSquadRoster then
+                row.invBtn.label:SetText("+ Merken")
+                row.invBtn:Show()
+            elseif not data.inGroup then
+                row.invBtn.label:SetText("Einladen")
+                row.invBtn:Show()
+            else
+                row.invBtn:Hide()
+            end
         else
             row.locText:SetText("|cff64748bOffline|r")
             row.vitalsText:SetText(ns.FormatTimeAgo(data.lastSeen))
             row.pinBtn:Hide()
             row.invBtn:Hide()
-            row.delBtn:Show()
         end
     end)
 
@@ -957,22 +1031,48 @@ local function BuildRadarView(parent)
         local freeStr = nextFree and string.format(" (Nächste ID frei in %d Min.)", math.ceil(nextFree / 60)) or ""
 
         self.lockoutInfo:SetText(string.format(
-            "Deine Instanz-IDs (60 Min.): |cff38bdf8%d/5|r%s   ·   Sync-Modus: |cff34d399Gruppe / Gilde / Online-Freunde|r",
+            "Deine Instanz-IDs: |cff38bdf8%d/5|r%s  ·  Legende: |cff34d399[Stammgruppe]|r / |cff38bdf8[Freund]|r vs. |cfffbbf24[Nur Gruppe]|r  ·  |cfff87171[×]|r = Aus Liste entfernen",
             loCount, freeStr
         ))
+
+        if self.relDropdown and self.relDropdown.RefreshValue then
+            self.relDropdown:RefreshValue()
+        end
 
         local entries = {}
         local seenShorts = {}
         local now = time()
         local confirmedOnline = (ns.Sync and ns.Sync.GetConfirmedOnlineFriends and ns.Sync:GetConfirmedOnlineFriends()) or {}
 
+        local function tryPushEntry(rawEntry)
+            local short = rawEntry.shortName
+            local relKind, relBadge, isFriendOrSquad, inGroup = ns.GetPeerRelationship(short, rawEntry.peerRef)
+            rawEntry.relKind = relKind
+            rawEntry.relBadge = relBadge
+            rawEntry.isFriendOrSquad = isFriendOrSquad
+            rawEntry.isSquadRoster = ns.IsInSquadRoster(short)
+            rawEntry.inGroup = inGroup
+
+            if self.relFilter == "FRIENDS_ONLY" and not isFriendOrSquad then
+                return
+            elseif self.relFilter == "GROUP_ONLY" and not inGroup then
+                return
+            end
+
+            if ns.MatchesGlobalFilter(rawEntry, false, rawEntry.faction) then
+                entries[#entries + 1] = rawEntry
+            end
+        end
+
+        -- 1. Live onlinePeers
         for _, peer in pairs(ns.onlinePeers or {}) do
             local short = ns.ShortName(peer.shortName or peer.name)
             local lower = short:lower()
-            if lower ~= "" and lower ~= "unbekannt" and not ns.IsSelfName(short) then
+            if lower ~= "" and lower ~= "unbekannt" and not ns.IsSelfName(short) and not ns.IsDismissedPeer(short) then
                 seenShorts[lower] = true
                 local pFac = ns.ResolveCharacterFaction(short, peer.faction)
-                local entry = {
+                tryPushEntry({
+                    peerRef = peer,
                     name = peer.name,
                     shortName = short,
                     class = peer.class or "WARRIOR",
@@ -986,40 +1086,63 @@ local function BuildRadarView(parent)
                     lockouts = peer.lockouts or 0,
                     lastSeen = peer.lastSeen or 0,
                     isOnline = ((now - (peer.lastSeen or 0)) < 600) or (confirmedOnline[lower] ~= nil),
-                }
-                if ns.MatchesGlobalFilter(entry, false, pFac) then
-                    entries[#entries + 1] = entry
-                end
+                })
             end
         end
 
+        -- 2. Saved Squad Roster members (even if offline)
         for rosterName in pairs(ns.db and ns.db.squadRoster or {}) do
             local short = ns.ShortName(rosterName)
             local lower = short:lower()
             if lower ~= "" and not ns.IsSelfName(short) and not seenShorts[lower] then
                 seenShorts[lower] = true
                 local rFac = ns.ResolveCharacterFaction(short)
-                local entry = {
+                local cachedChar = nil
+                for _, sc in pairs(ns.db and ns.db.squadCharacters or {}) do
+                    if ns.ShortName(sc.name or sc.key):lower() == lower then
+                        cachedChar = sc
+                        break
+                    end
+                end
+                tryPushEntry({
                     name = short,
                     shortName = short,
-                    class = "PRIEST",
+                    class = (cachedChar and cachedChar.class) or "PRIEST",
                     faction = rFac,
-                    level = 0,
+                    level = (cachedChar and cachedChar.level) or 0,
                     isOnline = (confirmedOnline[lower] ~= nil),
-                    lastSeen = 0,
-                }
-                if ns.MatchesGlobalFilter(entry, false, rFac) then
-                    entries[#entries + 1] = entry
-                end
+                    lastSeen = (cachedChar and cachedChar.updatedAt) or 0,
+                })
+            end
+        end
+
+        -- 3. Any other cached squadCharacters in DB (so you can see and delete old cached characters too!)
+        for key, sc in pairs(ns.db and ns.db.squadCharacters or {}) do
+            local short = ns.ShortName(sc.name or key)
+            local lower = short:lower()
+            if lower ~= "" and lower ~= "unbekannt" and not ns.IsSelfName(short) and not seenShorts[lower] and not ns.IsDismissedPeer(short) then
+                seenShorts[lower] = true
+                local sFac = ns.ResolveCharacterFaction(short, sc.faction)
+                tryPushEntry({
+                    name = short,
+                    shortName = short,
+                    class = sc.class or "WARRIOR",
+                    faction = sFac,
+                    level = sc.level or 0,
+                    isOnline = (confirmedOnline[lower] ~= nil),
+                    lastSeen = sc.updatedAt or 0,
+                })
             end
         end
 
         table.sort(entries, function(a, b)
+            -- Sort Friends/Squad Roster above temporary group members
+            if a.isFriendOrSquad ~= b.isFriendOrSquad then return a.isFriendOrSquad end
             if a.isOnline ~= b.isOnline then return a.isOnline end
             return (a.shortName or "") < (b.shortName or "")
         end)
 
-        self.listFrame:SetData(entries, "Noch keine Freunde in der Liste. Füge oben deine Freunde per Namen hinzu oder klicke auf 'Sync Senden'!")
+        self.listFrame:SetData(entries, "Keine Einträge für diesen Filter. Füge oben deine Freunde per Namen zur Stammgruppe hinzu!")
     end
 
     return view
